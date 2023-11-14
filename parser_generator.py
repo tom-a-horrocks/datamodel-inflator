@@ -107,3 +107,99 @@ def make_parser(tp: type[T]) -> Callable[[Any], T]:
         # Already parsed
         return identity
     raise ValueError(f"Unsupported type {tp}")
+
+
+def make_list_parser_code(inner_tp: type[T]) -> tuple[str, str]:
+    inner_parser_code = make_parser_code(inner_tp)
+    return f"lambda xs: [{inner_parser_code}(x) for x in xs]"
+
+
+def make_optional_parser_code(
+    inner_tp: type[Optional[T]],
+) -> tuple[str, str]:
+    inner_parser_code = make_parser_code(inner_tp)
+    return f"lambda x: None if x is None else {inner_parser_code}(x)"
+
+
+def make_parser_code(tp: type[T]) -> tuple[str, str]:
+    # Argument could be a (data)class, a wrapped type (list or optional), or a base class (inc. Enum).
+    if origin := get_origin(tp):
+        # LIST or OPTIONAL
+        args = get_args(tp)
+        if origin is list:
+            return make_list_parser_code(only(args))
+        elif origin is Union and len(args) == 2 and args[1] is type(None):
+            return make_optional_parser_code(args[0])
+        else:
+            raise ValueError(
+                f"Unexpected compound type (only Union and List supported): {tp}"
+            )
+        # Wrapped type (list or optional)
+    elif dataclasses.is_dataclass(tp):
+        # DATACLASS
+        fields = dataclasses.fields(tp)
+        type_hints = get_type_hints(tp)
+
+        # First, generate parsers for each dataclass field. This is first so that it is defined before it's needed.
+        retval = f"{tp.__name__}_parser = obj_parser({tp.__name__},"
+        for f in fields:
+            defn, body = make_parser_code(type_hints[f.name])
+            retval += f"{f.name}=field(name='{f.name}', f={make_parser_code(type_hints[f.name])}, has_default={f.default != dataclasses.MISSING})"
+        retval += ")"
+
+        # Second, return the parser for the current dataclass field.
+
+        return (
+            f"obj_parser({tp.__name__},"
+            + ",".join(
+                f"{f.name}=field(name='{f.name}', f={make_parser_code(type_hints[f.name])}, has_default={f.default != dataclasses.MISSING})"
+                for f in fields
+            )
+            + ")"
+        )
+
+    elif issubclass(tp, Enum):
+        return tp.__name__
+    elif tp in {dict, str, int, float, bool}:
+        return "identity"
+    raise ValueError(f"Unsupported type {tp}")
+
+
+def test():
+    from dataclasses import dataclass
+    from black import format_str, FileMode
+
+    class AusState(Enum):
+        WA = "WA"
+        SA = "SA"
+        NT = "NT"
+        TAS = "TAS"
+        QLD = "QLD"
+        VIC = "VIC"
+        NSW = "NSW"
+        ACT = "ACT"
+
+    @dataclass
+    class Address:
+        number: int
+        street: str
+        state: AusState
+
+    @dataclass
+    class Person:
+        name: str
+        aliases: list[str]
+        address: Address
+        gender: Optional[str]
+
+    address = Address(13, "Fake Street", AusState.WA)
+    person = Person("Tom", ["T-bone", "t3h pwn3r3r"], address, None)
+
+    code = make_parser_code(Person)
+
+    print(code)
+    print(format_str(code, mode=FileMode()))
+
+
+if __name__ == "__main__":
+    test()
