@@ -1,6 +1,7 @@
 import dataclasses
 from collections.abc import Iterable, Callable
 from enum import Enum
+from itertools import chain
 from operator import itemgetter
 from typing import (
     get_origin,
@@ -10,8 +11,10 @@ from typing import (
     get_type_hints,
     Any,
     Optional,
+    Type,
 )
 
+from black import format_str, FileMode
 
 A = TypeVar("A")
 B = TypeVar("B")
@@ -42,7 +45,7 @@ def field(
     return compose(f, get)
 
 
-def obj_parser(klass: type[Y], **parsers) -> Callable[[dict[str, Any]], Y]:
+def obj_parser(klass: Type[Y], **parsers) -> Callable[[dict[str, Any]], Y]:
     def inner(d: dict[str, Any]) -> Y:
         return klass(**{attr: parser(d) for attr, parser in parsers.items()})
 
@@ -60,17 +63,17 @@ def only(xs: Iterable[T]) -> T:
     return fst
 
 
-def make_list_parser(inner_tp: type[T]) -> Callable[[list[Any]], T]:
+def make_list_parser(inner_tp: Type[T]) -> Callable[[list[Any]], T]:
     inner_parser = make_parser(inner_tp)
     return lambda xs: [inner_parser(x) for x in xs]
 
 
-def make_optional_parser(inner_tp: type[Optional[T]]) -> Callable[[Any], Optional[T]]:
+def make_optional_parser(inner_tp: Type[Optional[T]]) -> Callable[[Any], Optional[T]]:
     inner_parser = make_parser(inner_tp)
     return lambda x: None if x is None else inner_parser(x)
 
 
-def make_parser(tp: type[T]) -> Callable[[Any], T]:
+def make_parser(tp: Type[T]) -> Callable[[Any], T]:
     # Argument could be a (data)class, a wrapped type (list or optional), or a base class (inc. Enum).
     if origin := get_origin(tp):
         # LIST or OPTIONAL
@@ -109,97 +112,113 @@ def make_parser(tp: type[T]) -> Callable[[Any], T]:
     raise ValueError(f"Unsupported type {tp}")
 
 
-def make_list_parser_code(inner_tp: type[T]) -> tuple[str, str]:
-    inner_parser_code = make_parser_code(inner_tp)
+def make_list_parser_code(inner_tp: Type[T], dc_parsers_exist: bool) -> str:
+    inner_parser_code = make_parser_statement(
+        inner_tp, dc_parsers_exist, _at_root=False
+    )
     return f"lambda xs: [{inner_parser_code}(x) for x in xs]"
 
 
 def make_optional_parser_code(
-    inner_tp: type[Optional[T]],
-) -> tuple[str, str]:
-    inner_parser_code = make_parser_code(inner_tp)
+    inner_tp: Type[Optional[T]], dc_parsers_exist: bool
+) -> str:
+    inner_parser_code = make_parser_statement(
+        inner_tp, dc_parsers_exist, _at_root=False
+    )
     return f"lambda x: None if x is None else {inner_parser_code}(x)"
 
 
-def make_parser_code(tp: type[T]) -> tuple[str, str]:
-    # Argument could be a (data)class, a wrapped type (list or optional), or a base class (inc. Enum).
-    if origin := get_origin(tp):
-        # LIST or OPTIONAL
-        args = get_args(tp)
-        if origin is list:
-            return make_list_parser_code(only(args))
-        elif origin is Union and len(args) == 2 and args[1] is type(None):
-            return make_optional_parser_code(args[0])
-        else:
-            raise ValueError(
-                f"Unexpected compound type (only Union and List supported): {tp}"
-            )
-        # Wrapped type (list or optional)
-    elif dataclasses.is_dataclass(tp):
-        # DATACLASS
-        fields = dataclasses.fields(tp)
-        type_hints = get_type_hints(tp)
+def dc_parser_name(dc: Type) -> str:
+    return f"{dc.__name__.lower()}_parser"
 
-        # First, generate parsers for each dataclass field. This is first so that it is defined before it's needed.
-        retval = f"{tp.__name__}_parser = obj_parser({tp.__name__},"
-        for f in fields:
-            defn, body = make_parser_code(type_hints[f.name])
-            retval += f"{f.name}=field(name='{f.name}', f={make_parser_code(type_hints[f.name])}, has_default={f.default != dataclasses.MISSING})"
-        retval += ")"
 
-        # Second, return the parser for the current dataclass field.
-
-        return (
-            f"obj_parser({tp.__name__},"
-            + ",".join(
-                f"{f.name}=field(name='{f.name}', f={make_parser_code(type_hints[f.name])}, has_default={f.default != dataclasses.MISSING})"
-                for f in fields
-            )
-            + ")"
+def make_parser_statement(tp: Type[T], recurse_dc: bool, _at_root: bool = True) -> str:
+    # WRAPPED TYPE (list, origin)
+    origin = get_origin(tp)
+    args = get_args(tp)
+    if origin is list:
+        return make_list_parser_code(only(args), recurse_dc)
+    if origin is Union and len(args) == 2 and args[1] is type(None):
+        return make_optional_parser_code(args[0], recurse_dc)
+    if origin is not None:
+        raise ValueError(
+            f"Unexpected compound type (only Union and List supported): {tp}"
         )
+    # DATACLASS
+    if dataclasses.is_dataclass(tp):
+        if recurse_dc or _at_root:
+            fields = dataclasses.fields(tp)
+            type_hints = get_type_hints(tp)
+            return (
+                f"obj_parser({tp.__name__},"
+                + ",".join(
+                    f"{f.name}=field("
+                    f"name='{f.name}', "
+                    f"f={make_parser_statement(tp=type_hints[f.name], recurse_dc=recurse_dc, _at_root=False)}, "
+                    f"has_default={f.default != dataclasses.MISSING}"
+                    f")"
+                    for f in fields
+                )
+                + ")"
+            )
+        # Otherwise assume parser exists
+        return dc_parser_name(tp)
 
-    elif issubclass(tp, Enum):
+    # ENUM
+    if issubclass(tp, Enum):
         return tp.__name__
-    elif tp in {dict, str, int, float, bool}:
+    # BASE
+    if tp in {dict, str, int, float, bool}:
         return "identity"
     raise ValueError(f"Unsupported type {tp}")
 
 
-def test():
-    from dataclasses import dataclass
-    from black import format_str, FileMode
+def traverse_dataclasses(tp: Type) -> list:
+    """
+    Construct a complete list of all dataclasses referenced in the given dataclass,
+    recursively, and including the given dataclass itself. If the given type is not
+    a dataclass an empty list is returned.
 
-    class AusState(Enum):
-        WA = "WA"
-        SA = "SA"
-        NT = "NT"
-        TAS = "TAS"
-        QLD = "QLD"
-        VIC = "VIC"
-        NSW = "NSW"
-        ACT = "ACT"
-
-    @dataclass
-    class Address:
-        number: int
-        street: str
-        state: AusState
-
-    @dataclass
-    class Person:
-        name: str
-        aliases: list[str]
-        address: Address
-        gender: Optional[str]
-
-    address = Address(13, "Fake Street", AusState.WA)
-    person = Person("Tom", ["T-bone", "t3h pwn3r3r"], address, None)
-
-    code = make_parser_code(Person)
-
-    print(code)
-    print(format_str(code, mode=FileMode()))
+    The discovered types are ordered from the parent to the leaves, and may contain duplicates.
+    :param tp:
+    :return:
+    """
+    # WRAPPED TYPE (list, origin)
+    origin = get_origin(tp)
+    args = get_args(tp)
+    if origin is list:
+        return traverse_dataclasses(only(args))
+    if origin is Union and len(args) == 2 and args[1] is type(None):
+        return traverse_dataclasses(args[0])
+    if origin is not None:
+        raise ValueError(
+            f"Unexpected compound type (only Union and List supported): {tp}"
+        )
+    if dataclasses.is_dataclass(tp):
+        # DATACLASS
+        type_hints = get_type_hints(tp)
+        field_types = [type_hints[f.name] for f in dataclasses.fields(tp)]
+        return list(
+            chain([tp], *[traverse_dataclasses(inner_tp) for inner_tp in field_types])
+        )
+    return []
 
 
-if __name__ == "__main__":
-    test()
+def filter_unique(xs: Iterable[T]) -> T:
+    return list(dict.fromkeys(xs))
+
+
+def dataclass_dependencies(dc: Type) -> list:
+    return filter_unique(reversed(traverse_dataclasses(dc)))
+
+
+def generate_parser_code(dcs: list[Type]) -> str:
+    dcs = filter_unique(chain.from_iterable(dataclass_dependencies(dc) for dc in dcs))
+    import_statements = ["from parser_generator import *", "from model import *"]
+    parser_statements = [
+        f"{dc_parser_name(dc)} = {make_parser_statement(dc, recurse_dc=False)}"
+        for dc in dcs
+    ]
+    code = "\n".join(import_statements + parser_statements)
+    formatted_code = format_str(code, mode=FileMode())
+    return formatted_code
