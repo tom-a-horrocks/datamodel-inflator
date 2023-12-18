@@ -19,9 +19,11 @@ from black import format_str, FileMode
 A = TypeVar("A")
 B = TypeVar("B")
 C = TypeVar("C")
+K = TypeVar("K")
 X = TypeVar("X")
 Y = TypeVar("Y")
 T = TypeVar("T")
+V = TypeVar("V")
 
 
 def identity(x: T) -> T:
@@ -63,7 +65,7 @@ def only(xs: Iterable[T]) -> T:
     return fst
 
 
-def make_list_parser(inner_tp: Type[T]) -> Callable[[list[Any]], T]:
+def make_list_parser(inner_tp: Type[T]) -> Callable[[list[Any]], list[T]]:
     inner_parser = make_parser(inner_tp)
     return lambda xs: [inner_parser(x) for x in xs]
 
@@ -71,6 +73,14 @@ def make_list_parser(inner_tp: Type[T]) -> Callable[[list[Any]], T]:
 def make_optional_parser(inner_tp: Type[Optional[T]]) -> Callable[[Any], Optional[T]]:
     inner_parser = make_parser(inner_tp)
     return lambda x: None if x is None else inner_parser(x)
+
+
+def make_dict_parser(
+    key_type: Type[K], value_type: Type[V]
+) -> Callable[[dict[Any, Any]], dict[K, V]]:
+    key_parser = make_parser(key_type)
+    value_parser = make_parser(value_type)
+    return lambda d: {key_parser(k): value_parser(v) for k, v in d.items()}
 
 
 def make_parser(tp: Type[T]) -> Callable[[Any], T]:
@@ -82,9 +92,12 @@ def make_parser(tp: Type[T]) -> Callable[[Any], T]:
             return make_list_parser(only(args))
         elif origin is Union and len(args) == 2 and args[1] is type(None):
             return make_optional_parser(args[0])
+        elif origin is dict:
+            k_type, v_type = args
+            return make_dict_parser(k_type, v_type)
         else:
             raise ValueError(
-                f"Unexpected compound type (only Union and List supported): {tp}"
+                f"Unexpected compound type (only Union, List, and Dict supported): {tp}"
             )
         # Wrapped type (list or optional)
     elif dataclasses.is_dataclass(tp):
@@ -106,7 +119,7 @@ def make_parser(tp: Type[T]) -> Callable[[Any], T]:
         return obj_parser(tp, **parser_dict)
     elif issubclass(tp, Enum):
         return tp  # Assume enum class is its own constructor
-    elif tp in {dict, str, int, float, bool}:
+    elif tp in {str, int, float, bool}:
         # Already parsed
         return identity
     raise ValueError(f"Unsupported type {tp}")
@@ -119,13 +132,23 @@ def make_list_parser_code(inner_tp: Type[T], dc_parsers_exist: bool) -> str:
     return f"lambda xs: [{inner_parser_code}(x) for x in xs]"
 
 
+def make_dict_parser_code(
+    key_type: Type[K], value_type: Type[V], dc_parsers_exist: bool
+) -> str:
+    key_parser_code = make_parser_statement(key_type, dc_parsers_exist, _at_root=False)
+    value_parser_code = make_parser_statement(
+        value_type, dc_parsers_exist, _at_root=False
+    )
+    return f"lambda d: {{{key_parser_code}(k): {value_parser_code}(v) for k,v in d.items()}}"
+
+
 def make_optional_parser_code(
     inner_tp: Type[Optional[T]], dc_parsers_exist: bool
 ) -> str:
     inner_parser_code = make_parser_statement(
         inner_tp, dc_parsers_exist, _at_root=False
     )
-    return f"lambda x: None if x is None else {inner_parser_code}(x)"
+    return f"lambda x: None if x is None else ({inner_parser_code})(x)"
 
 
 def dc_parser_name(dc: Type) -> str:
@@ -140,9 +163,12 @@ def make_parser_statement(tp: Type[T], recurse_dc: bool, _at_root: bool = True) 
         return make_list_parser_code(only(args), recurse_dc)
     if origin is Union and len(args) == 2 and args[1] is type(None):
         return make_optional_parser_code(args[0], recurse_dc)
+    if origin is dict:
+        key_type, value_type = args
+        return make_dict_parser_code(key_type, value_type, recurse_dc)
     if origin is not None:
         raise ValueError(
-            f"Unexpected compound type (only Union and List supported): {tp}"
+            f"Unexpected compound type (only Union, List, and Dict supported): {tp}"
         )
     # DATACLASS
     if dataclasses.is_dataclass(tp):
@@ -168,7 +194,7 @@ def make_parser_statement(tp: Type[T], recurse_dc: bool, _at_root: bool = True) 
     if issubclass(tp, Enum):
         return tp.__name__
     # BASE
-    if tp in {dict, str, int, float, bool}:
+    if tp in {str, int, float, bool, Any}:
         return "identity"
     raise ValueError(f"Unsupported type {tp}")
 
@@ -190,9 +216,12 @@ def traverse_dataclasses(tp: Type) -> list:
         return traverse_dataclasses(only(args))
     if origin is Union and len(args) == 2 and args[1] is type(None):
         return traverse_dataclasses(args[0])
+    if origin is dict:
+        key_type, value_type = args
+        return traverse_dataclasses(key_type) + traverse_dataclasses(value_type)
     if origin is not None:
         raise ValueError(
-            f"Unexpected compound type (only Union and List supported): {tp}"
+            f"Unexpected compound type (only Union, List, and Dict supported): {tp}"
         )
     if dataclasses.is_dataclass(tp):
         # DATACLASS
