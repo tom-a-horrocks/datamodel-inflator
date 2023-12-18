@@ -149,3 +149,6 @@ result = response.json()
 parser = make_parser(model.MyDataClass)
 my_obj = parser(result)  # Done!
 ```
+
+# Known issues
+* Dataclasses with non-default arguments that inherit from dataclasses with default arguments will produce /"TypeError: non-default argument 'b' follows default argument"/. Currently the only fix is to change the dataclass decorator to @dataclass(kw_only=True); see https://github.com/koxudaxi/datamodel-code-generator/issues/1559 for a discussion.
