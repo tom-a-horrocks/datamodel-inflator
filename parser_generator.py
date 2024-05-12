@@ -93,13 +93,13 @@ def make_parser(tp: Type[T]) -> Callable[[Any], T]:
     # Argument could be a (data)class, a wrapped type (list or optional), or a base class (inc. Enum).
     if origin := get_origin(tp):
         # LIST or OPTIONAL
-        args = get_args(tp)
+        inner_types = get_args(tp)
         if origin is list:
-            return make_list_parser(only(args))
-        elif origin is Union and len(args) == 2 and args[1] is type(None):
-            return make_optional_parser(args[0])
+            return make_list_parser(only(inner_types))
+        elif origin is Union and len(inner_types) == 2 and inner_types[1] is type(None):
+            return make_optional_parser(inner_types[0])
         elif origin is dict:
-            k_type, v_type = args
+            k_type, v_type = inner_types
             return make_dict_parser(k_type, v_type)
         else:
             raise ValueError(
