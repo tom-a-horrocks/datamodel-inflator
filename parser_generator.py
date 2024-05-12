@@ -1,3 +1,5 @@
+# type: ignore
+
 import dataclasses
 from collections.abc import Iterable, Callable
 from enum import Enum
