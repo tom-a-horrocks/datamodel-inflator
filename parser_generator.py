@@ -122,7 +122,8 @@ def make_parser(tp: Type[T]) -> Callable[[Any], T]:
         }
         return obj_parser(tp, **parser_dict)
     elif issubclass(tp, Enum):
-        return tp  # Assume enum class is its own constructor
+        # Assume enum class is its own constructor
+        return tp  # type: ignore[return-value]
     elif tp in {str, int, float, bool}:
         # Already parsed
         return identity
@@ -235,7 +236,7 @@ def traverse_dataclasses(tp: Type) -> list:
     return []
 
 
-def filter_unique(xs: Iterable[T]) -> T:
+def filter_unique(xs: Iterable[T]) -> list[T]:
     return list(dict.fromkeys(xs))
 
 
