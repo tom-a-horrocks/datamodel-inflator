@@ -10,7 +10,6 @@ from typing import (
     TypeVar,
     get_type_hints,
     Any,
-    Optional,
     Type,
 )
 
@@ -37,14 +36,21 @@ def compose(f: Callable[[B], C], g: Callable[[A], B]) -> Callable[[A], C]:
     return fog
 
 
-def field(
-    name: str, f: Callable[[X], Y], has_default=False
+def field(name: str, f: Callable[[X], Y]) -> Callable[[dict[str, Any]], Y]:
+    return compose(f, itemgetter(name))
+
+
+def field_allow_missing(
+    name: str, f: Callable[[X | None], Y]
 ) -> Callable[[dict[str, Any]], Y]:
-    def get_or_none(k: str) -> Callable[[dict[str, X]], Optional[X]]:
+    """
+    Like field, but if "name" not in dict then None is passed to f.
+    """
+
+    def get_or_none(k: str) -> Callable[[dict[str, X]], X | None]:
         return lambda d: d.get(k)
 
-    get = get_or_none(name) if has_default else itemgetter(name)
-    return compose(f, get)
+    return compose(f, get_or_none(name))
 
 
 def obj_parser(klass: Type[Y], **parsers) -> Callable[[dict[str, Any]], Y]:
@@ -70,7 +76,7 @@ def make_list_parser(inner_tp: Type[T]) -> Callable[[list[Any]], list[T]]:
     return lambda xs: [inner_parser(x) for x in xs]
 
 
-def make_optional_parser(inner_tp: Type[Optional[T]]) -> Callable[[Any], Optional[T]]:
+def make_optional_parser(inner_tp: Type[T | None]) -> Callable[[Any], T | None]:
     inner_parser = make_parser(inner_tp)
     return lambda x: None if x is None else inner_parser(x)
 
@@ -109,11 +115,9 @@ def make_parser(tp: Type[T]) -> Callable[[Any], T]:
         # dataclasses.field.type from actual types (e.g. int) to a string representations
         # of that type (e.g. "int").
         parser_dict = {
-            f.name: field(
-                name=f.name,
-                f=make_parser(type_hints[f.name]),
-                has_default=f.default != dataclasses.MISSING,
-            )
+            f.name: field(name=f.name, f=make_parser(type_hints[f.name]))
+            if f.default == dataclasses.MISSING
+            else field_allow_missing(name=f.name, f=make_parser(type_hints[f.name]))
             for f in fields
         }
         return obj_parser(tp, **parser_dict)
@@ -142,9 +146,7 @@ def make_dict_parser_code(
     return f"lambda d: {{{key_parser_code}(k): {value_parser_code}(v) for k,v in d.items()}}"
 
 
-def make_optional_parser_code(
-    inner_tp: Type[Optional[T]], dc_parsers_exist: bool
-) -> str:
+def make_optional_parser_code(inner_tp: Type[T | None], dc_parsers_exist: bool) -> str:
     inner_parser_code = make_parser_statement(
         inner_tp, dc_parsers_exist, _at_root=False
     )
