@@ -1,5 +1,3 @@
-# type: ignore
-
 import dataclasses
 from collections.abc import Iterable, Callable
 from enum import Enum
@@ -97,12 +95,15 @@ def make_parser(tp: Type[T]) -> Callable[[Any], T]:
         # LIST or OPTIONAL
         inner_types = get_args(tp)
         if origin is list:
-            return make_list_parser(only(inner_types))
+            # TODO fix type error
+            return make_list_parser(only(inner_types))  # type: ignore[return-value]
         elif origin is Union and len(inner_types) == 2 and inner_types[1] is type(None):
-            return make_optional_parser(inner_types[0])
+            # TODO fix type error
+            return make_optional_parser(inner_types[0])  # type: ignore[return-value]
         elif origin is dict:
             k_type, v_type = inner_types
-            return make_dict_parser(k_type, v_type)
+            # TODO fix type error
+            return make_dict_parser(k_type, v_type)  # type: ignore[return-value]
         else:
             raise ValueError(
                 f"Unexpected compound type (only Union, List, and Dict supported): {tp}"
@@ -122,7 +123,8 @@ def make_parser(tp: Type[T]) -> Callable[[Any], T]:
             else field_allow_missing(name=f.name, f=make_parser(type_hints[f.name]))
             for f in fields
         }
-        return obj_parser(tp, **parser_dict)
+        # TODO fix type error
+        return obj_parser(tp, **parser_dict)  # type: ignore[arg-type]
     elif issubclass(tp, Enum):
         # Assume enum class is its own constructor
         return tp  # type: ignore[return-value]
