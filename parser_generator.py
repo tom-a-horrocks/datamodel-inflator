@@ -182,13 +182,25 @@ def make_parser_statement(tp: Type[T], recurse_dc: bool, _at_root: bool = True) 
         if recurse_dc or _at_root:
             fields = dataclasses.fields(tp)
             type_hints = get_type_hints(tp)
+
+            #         parser_dict = {
+            #             f.name: field(name=f.name, f=make_parser(type_hints[f.name]))
+            #             if f.default == dataclasses.MISSING
+            #             else field_allow_missing(name=f.name, f=make_parser(type_hints[f.name]))
+            #             for f in fields
+            #         }
+
             return (
                 f"obj_parser({tp.__name__},"
                 + ",".join(
                     f"{f.name}=field("
                     f"name='{f.name}', "
-                    f"f={make_parser_statement(tp=type_hints[f.name], recurse_dc=recurse_dc, _at_root=False)}, "
-                    f"has_default={f.default != dataclasses.MISSING}"
+                    f"f={make_parser_statement(tp=type_hints[f.name], recurse_dc=recurse_dc, _at_root=False)}"
+                    f")"
+                    if {f.default == dataclasses.MISSING}
+                    else f"field_allow_missing("
+                    f"name='{f.name}', "
+                    f"f={make_parser_statement(tp=type_hints[f.name], recurse_dc=recurse_dc, _at_root=False)}"
                     f")"
                     for f in fields
                 )
