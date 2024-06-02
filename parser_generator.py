@@ -197,8 +197,8 @@ def make_parser_statement(tp: Type[T], recurse_dc: bool, _at_root: bool = True) 
                     f"name='{f.name}', "
                     f"f={make_parser_statement(tp=type_hints[f.name], recurse_dc=recurse_dc, _at_root=False)}"
                     f")"
-                    if {f.default == dataclasses.MISSING}
-                    else f"field_allow_missing("
+                    if f.default == dataclasses.MISSING
+                    else f"{f.name}=field_allow_missing("
                     f"name='{f.name}', "
                     f"f={make_parser_statement(tp=type_hints[f.name], recurse_dc=recurse_dc, _at_root=False)}"
                     f")"
