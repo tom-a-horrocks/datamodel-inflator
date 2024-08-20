@@ -118,9 +118,11 @@ def make_parser(tp: Type[T]) -> Callable[[Any], T]:
         # dataclasses.field.type from actual types (e.g. int) to a string representations
         # of that type (e.g. "int").
         parser_dict = {
-            f.name: field(name=f.name, f=make_parser(type_hints[f.name]))
-            if f.default == dataclasses.MISSING
-            else field_allow_missing(name=f.name, f=make_parser(type_hints[f.name]))
+            f.name: (
+                field(name=f.name, f=make_parser(type_hints[f.name]))
+                if f.default == dataclasses.MISSING
+                else field_allow_missing(name=f.name, f=make_parser(type_hints[f.name]))
+            )
             for f in fields
         }
         # TODO fix type error
@@ -162,7 +164,7 @@ def dc_parser_name(dc: Type) -> str:
     return f"{dc.__name__.lower()}_parser"
 
 
-def make_parser_statement(tp: Type[T], recurse_dc: bool, _at_root: bool = True) -> str:
+def make_parser_statement(tp: Type, recurse_dc: bool, _at_root: bool = True) -> str:
     # WRAPPED TYPE (list, origin)
     origin = get_origin(tp)
     args = get_args(tp)
@@ -193,15 +195,17 @@ def make_parser_statement(tp: Type[T], recurse_dc: bool, _at_root: bool = True) 
             return (
                 f"obj_parser({tp.__name__},"
                 + ",".join(
-                    f"{f.name}=field("
-                    f"name='{f.name}', "
-                    f"f={make_parser_statement(tp=type_hints[f.name], recurse_dc=recurse_dc, _at_root=False)}"
-                    f")"
-                    if f.default == dataclasses.MISSING
-                    else f"{f.name}=field_allow_missing("
-                    f"name='{f.name}', "
-                    f"f={make_parser_statement(tp=type_hints[f.name], recurse_dc=recurse_dc, _at_root=False)}"
-                    f")"
+                    (
+                        f"{f.name}=field("
+                        f"name='{f.name}', "
+                        f"f={make_parser_statement(tp=type_hints[f.name], recurse_dc=recurse_dc, _at_root=False)}"
+                        f")"
+                        if f.default == dataclasses.MISSING
+                        else f"{f.name}=field_allow_missing("
+                        f"name='{f.name}', "
+                        f"f={make_parser_statement(tp=type_hints[f.name], recurse_dc=recurse_dc, _at_root=False)}"
+                        f")"
+                    )
                     for f in fields
                 )
                 + ")"
