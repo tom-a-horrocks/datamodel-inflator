@@ -1,19 +1,11 @@
 import dataclasses
-from collections.abc import Iterable, Callable
+from collections.abc import Callable, Iterable
 from enum import Enum
 from itertools import chain
 from operator import itemgetter
-from typing import (
-    get_origin,
-    Union,
-    get_args,
-    TypeVar,
-    get_type_hints,
-    Any,
-    Type,
-)
+from typing import Any, Type, TypeVar, Union, get_args, get_origin, get_type_hints
 
-from black import format_str, FileMode
+from black import FileMode, format_str
 
 A = TypeVar("A")
 B = TypeVar("B")
