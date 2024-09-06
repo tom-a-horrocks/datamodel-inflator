@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from model import *
-from parser_generator import generate_parser_code, make_parser
+from ..parser_generator import generate_parser_code, make_parser
+from .model import Address, AusState, Person, Street
 
 person = Person(
     name="Tom",
@@ -23,12 +23,13 @@ person_dict = {
 }
 
 # Test dynamic parsing
-parser = make_parser(Person)
-assert parser(person_dict) == person
+person_parser = make_parser(Person)
+assert person_parser(person_dict) == person
 
 # Test static parsing
 formatted_code = generate_parser_code([Person])
 Path("./parser.py").write_text(formatted_code)
-import parser
+
+from . import parser
 
 assert parser.person_parser(person_dict) == person
